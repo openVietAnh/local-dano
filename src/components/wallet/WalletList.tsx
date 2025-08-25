@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { CARDANO_WALLET_ENDPOINT } from "@/consts";
+import { bech32ToHex } from "@/shared/wallet";
 
 interface Wallet {
   id: string;
@@ -37,8 +38,26 @@ export const WalletList = ({
       if (!response.ok) {
         throw new Error("Failed to fetch wallets");
       }
+
       const data = await response.json();
-      setWallets(data);
+      const processed = data.map((wallet: any) => {
+        if (wallet?.delegation?.active?.voting?.startsWith("drep")) {
+          console.log(
+            "Processing wallet with dRep:",
+            wallet.delegation.active.voting
+          );
+          wallet.dRepIdHex = bech32ToHex(wallet.delegation.active.voting);
+
+          // Save dRepIdHex to localStorage
+          const STORAGE_KEY = "walletDRepMappings";
+          const mappings =
+            JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") ?? {};
+          mappings[wallet.id] = wallet.dRepIdHex;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(mappings));
+        }
+        return wallet;
+      });
+      setWallets(processed);
     } catch (error) {
       toast({
         title: "Error",
@@ -56,6 +75,21 @@ export const WalletList = ({
       return `${(quantity / 1000000).toFixed(2)} ADA`;
     }
     return `${quantity} ${unit}`;
+  };
+
+  const handleWalletSelect = (wallet: Wallet) => {
+    if (typeof chrome !== "undefined" && chrome.storage) {
+      chrome.storage.local.set({ selectedWalletId: wallet.id }, () => {
+        chrome.runtime.sendMessage({
+          type: "SET_SELECTED_WALLET_ID",
+          walletId: wallet.id,
+        });
+      });
+    } else {
+      localStorage.setItem("selectedWalletId", wallet.id);
+    }
+
+    onWalletSelect(wallet);
   };
 
   if (isLoading) {
@@ -84,7 +118,7 @@ export const WalletList = ({
             {wallets.map((wallet) => (
               <div
                 key={wallet.id}
-                onClick={() => onWalletSelect(wallet)}
+                onClick={() => handleWalletSelect(wallet)}
                 className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-accent ${
                   selectedWalletId === wallet.id
                     ? "bg-accent border-primary"
